@@ -1,4 +1,4 @@
-pragma solidity 0.4.20;
+pragma solidity ^0.4.20;
 
 contract Election {
     // Model a Candidate
@@ -8,43 +8,48 @@ contract Election {
         uint voteCount;
     }
 
-    // Store accounts that have voted
+    // Track which addresses have voted
     mapping(address => bool) public voters;
-    // Store Candidates
-    // Fetch Candidate
+    // Store voter numbers for validation
+    mapping(address => uint) public voterNumbers;
+    // Candidate storage
     mapping(uint => Candidate) public candidates;
-    // Store Candidates Count
+    // Count of candidates
     uint public candidatesCount;
 
-    // voted event
-    event votedEvent (
-        uint indexed _candidateId
-    );
+    event votedEvent(uint indexed _candidateId);
 
-    function Election () public {
-        addCandidate("Candidate 1");
-        addCandidate("Candidate 2");
+    // Legacy constructor syntax for 0.4.x
+    function Election() public {
+        addCandidate("Candidate A");
+        addCandidate("Candidate B");
     }
 
-    function addCandidate (string _name) private {
-        candidatesCount ++;
+    function addCandidate(string _name) private {
+        candidatesCount++;
         candidates[candidatesCount] = Candidate(candidatesCount, _name, 0);
     }
 
-    function vote (uint _candidateId) public {
-        // require that they haven't voted before
+    // Register the voter's number (optional, call via Remix or other UI)
+    function registerVoterNumber(uint _voterNumber) public {
+        require(_voterNumber > 0);
+        voterNumbers[msg.sender] = _voterNumber;
+    }
+
+    // Vote by providing candidate ID and the voter's number
+    function vote(uint _candidateId, uint _voterNumber) public {
+        // Ensure the voter hasn't voted before
         require(!voters[msg.sender]);
-
-        // require a valid candidate
+        // Ensure a valid candidate is selected
         require(_candidateId > 0 && _candidateId <= candidatesCount);
+        // Validate that the provided voter number matches the registered one
+        require(voterNumbers[msg.sender] == _voterNumber);
 
-        // record that voter has voted
+        // Record the vote
         voters[msg.sender] = true;
+        candidates[_candidateId].voteCount++;
 
-        // update candidate vote Count
-        candidates[_candidateId].voteCount ++;
-
-        // trigger voted event
+        // Trigger the event
         votedEvent(_candidateId);
     }
 }
