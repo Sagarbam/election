@@ -2,121 +2,139 @@ App = {
   web3Provider: null,
   contracts: {},
   account: '0x0',
-  hasVoted: false,
 
   init: function() {
+    $('#voteLink').hide();  // Hide the voting link initially
     return App.initWeb3();
   },
 
   initWeb3: function() {
-    // TODO: refactor conditional
-    if (typeof web3 !== 'undefined') {
-      // If a web3 instance is already provided by Meta Mask.
-      App.web3Provider = web3.currentProvider;
-      web3 = new Web3(web3.currentProvider);
+    if (typeof window.ethereum !== 'undefined') {
+      App.web3Provider = window.ethereum;
+      window.ethereum.request({ method: 'eth_requestAccounts' });
+      web3 = new Web3(window.ethereum);
+    } else if (typeof window.web3 !== 'undefined') {
+      App.web3Provider = window.web3.currentProvider;
+      web3 = new Web3(window.web3.currentProvider);
     } else {
-      // Specify default instance if no web3 instance provided
-      App.web3Provider = new Web3.providers.HttpProvider('http://localhost:7545');
+      // Fallback to Ganache
+      App.web3Provider = new Web3.providers.HttpProvider('http://127.0.0.1:7545');
       web3 = new Web3(App.web3Provider);
     }
     return App.initContract();
   },
 
   initContract: function() {
-    $.getJSON("Election.json", function(election) {
-      // Instantiate a new truffle contract from the artifact
+    $.getJSON('build/contracts/Election.json', function(election) {
       App.contracts.Election = TruffleContract(election);
-      // Connect provider to interact with contract
       App.contracts.Election.setProvider(App.web3Provider);
 
       App.listenForEvents();
-
       return App.render();
     });
   },
 
-  // Listen for events emitted from the contract
   listenForEvents: function() {
     App.contracts.Election.deployed().then(function(instance) {
-      // Restart Chrome if you are unable to receive this event
-      // This is a known issue with Metamask
-      // https://github.com/MetaMask/metamask-extension/issues/2393
-      instance.votedEvent({}, {
-        fromBlock: 0,
-        toBlock: 'latest'
-      }).watch(function(error, event) {
-        console.log("event triggered", event)
-        // Reload when a new vote is recorded
+      instance.votedEvent({}, { fromBlock: 0, toBlock: 'latest' })
+      .watch(function(error, event) {
+        console.log('Event triggered', event);
         App.render();
       });
     });
   },
 
   render: function() {
-    var electionInstance;
-    var loader = $("#loader");
-    var content = $("#content");
-
+    let loader = $('#loader');
+    let content = $('#content');
     loader.show();
     content.hide();
 
     // Load account data
-    web3.eth.getCoinbase(function(err, account) {
+    web3.eth.getCoinbase((err, account) => {
       if (err === null) {
         App.account = account;
-        $("#accountAddress").html("Your Account: " + account);
+        $('#accountAddress').html('Your Account: ' + account);
       }
     });
 
-    // Load contract data
+    loader.hide();
+    content.show();
+  },
+
+  // New function to check voter number from the backend
+  checkVoterNumber: function() {
+    let voterNumber = $('#voterNumberRegister').val();
+    if (!voterNumber || voterNumber <= 0) {
+      alert('Please enter a valid voter number.');
+      return;
+    }
+
+    // Check with backend if number exists in JSON
+    fetch('http://localhost:5000/api/auth/checkNumber', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ number: voterNumber })
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Number not found');
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (data.name) {
+        // If number exists, display name and allow registration
+        $('#voterStatus').html(`<span class="text-success">You can vote! Your name is ${data.name}.</span>`);
+        App.registerVoterNumber();  // Proceed with blockchain registration
+      } else {
+        // If number does not exist, show an error
+        $('#voterStatus').html(`<span class="text-danger">Sorry, you can't vote. Your number is not in the database.</span>`);
+      }
+    })
+    .catch(err => {
+      console.error(err);
+      alert('Error checking number. Check console for details.');
+    });
+  },
+
+  registerVoterNumber: function() {
+    let voterNumber = $('#voterNumberRegister').val();
+    if (!voterNumber || voterNumber <= 0) {
+      alert('Please enter a valid voter number.');
+      return;
+    }
+
     App.contracts.Election.deployed().then(function(instance) {
-      electionInstance = instance;
-      return electionInstance.candidatesCount();
-    }).then(function(candidatesCount) {
-      var candidatesResults = $("#candidatesResults");
-      candidatesResults.empty();
-
-      var candidatesSelect = $('#candidatesSelect');
-      candidatesSelect.empty();
-
-      for (var i = 1; i <= candidatesCount; i++) {
-        electionInstance.candidates(i).then(function(candidate) {
-          var id = candidate[0];
-          var name = candidate[1];
-          var voteCount = candidate[2];
-
-          // Render candidate Result
-          var candidateTemplate = "<tr><th>" + id + "</th><td>" + name + "</td><td>" + voteCount + "</td></tr>"
-          candidatesResults.append(candidateTemplate);
-
-          // Render candidate ballot option
-          var candidateOption = "<option value='" + id + "' >" + name + "</ option>"
-          candidatesSelect.append(candidateOption);
-        });
-      }
-      return electionInstance.voters(App.account);
-    }).then(function(hasVoted) {
-      // Do not allow a user to vote
-      if(hasVoted) {
-        $('form').hide();
-      }
-      loader.hide();
-      content.show();
-    }).catch(function(error) {
-      console.warn(error);
+      return instance.registerVoterNumber(voterNumber, { from: App.account });
+    }).then(function(result) {
+      alert('Voter number registered successfully!');
+      $('#voteLink').show();  // Show the voting link after successful registration
+    }).catch(function(err) {
+      console.error(err);
+      alert('Error registering voter number. Check console for details.');
     });
   },
 
   castVote: function() {
-    var candidateId = $('#candidatesSelect').val();
+    let voterNumber = $('#voterNumber').val();
+    let candidateId = $('input[name="candidateRadio"]:checked').val();
+
+    if (!voterNumber || voterNumber <= 0) {
+      alert('Please enter a valid voter number.');
+      return;
+    }
+
     App.contracts.Election.deployed().then(function(instance) {
-      return instance.vote(candidateId, { from: App.account });
+      return instance.vote(candidateId, voterNumber, { from: App.account });
     }).then(function(result) {
-      // Wait for votes to update
-      $("#content").hide();
-      $("#loader").show();
+      $('#content').hide();
+      $('#loader').show();
     }).catch(function(err) {
       console.error(err);
+      alert('Error processing your vote. Check console for details.');
     });
   }
 };
